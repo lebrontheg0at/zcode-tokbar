@@ -1,0 +1,210 @@
+<script>
+/* ===== ZCode Token Bar — renderer patch (app.asar) =====
+ * 等界面挂载好后，在输入框下方插入速率条；每 800ms 从主进程的 127.0.0.1:9335 拉真实指标。
+ */
+(function () {
+  var BAR_ID = 'zcode-tokbar';
+  const MONO = 'ui-monospace,SFMono-Regular,Consolas,monospace';
+  var API = 'http://127.0.0.1:9335/metrics';
+  var installed = false;
+  var readyAt = 0;
+
+  function isDark() {
+    var el = document.getElementById('root') || document.body;
+    for (var i = 0; i < 6 && el; i++) {
+      var bg = getComputedStyle(el).backgroundColor || '';
+      var m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+      if (m && (m[4] === undefined || parseFloat(m[4]) > 0.5)) {
+        var l = 0.299 * (+m[1]) + 0.587 * (+m[2]) + 0.114 * (+m[3]);
+        return l < 128;
+      }
+      el = el.parentElement;
+    }
+    try { return matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { return true; }
+  }
+
+  function palette() {
+    return isDark()
+      ? { bg: '#000', fg: 'rgba(235,238,242,.62)', line: 'rgba(255,255,255,.10)', strong: '#eceff2', dim: 'rgba(255,255,255,.38)', good: '#3ddc97', warn: '#f7b955', bad: '#ff6b6b' }
+      : { bg: '#fff', fg: 'rgba(17,24,39,.62)', line: 'rgba(0,0,0,.10)', strong: '#111827', dim: 'rgba(0,0,0,.38)', good: '#059669', warn: '#d97706', bad: '#dc2626' };
+  }
+
+  // 取真实底色：向上找第一个不透明的背景色，让条子和 ZCode 融合
+  function bgOf(el) {
+    for (var i = 0; i < 14 && el; i++) {
+      var bg = getComputedStyle(el).backgroundColor || '';
+      if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return bg;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function findComposer() {
+    var nodes = document.querySelectorAll('textarea, [contenteditable="true"], [contenteditable=""]');
+    var best = null, bestY = -Infinity;
+    for (var i = 0; i < nodes.length; i++) {
+      var r = nodes[i].getBoundingClientRect();
+      if (r.width < 60 || r.height < 8) continue;
+      if (r.top > bestY) { bestY = r.top; best = nodes[i]; }
+    }
+    return best;
+  }
+
+  function findScroller() {
+    var all = document.querySelectorAll('div');
+    var best = null, bestH = 0;
+    for (var i = 0; i < all.length; i++) {
+      var cs = getComputedStyle(all[i]);
+      if (!/(auto|scroll)/.test(cs.overflowY)) continue;
+      if (all[i].clientHeight < 300) continue;
+      if (all[i].scrollHeight <= all[i].clientHeight + 40) continue;
+      if (all[i].clientHeight > bestH) { bestH = all[i].clientHeight; best = all[i]; }
+    }
+    return best;
+  }
+
+  function buildBar() {
+    var p = palette();
+    var bar = document.createElement('div');
+    bar.id = BAR_ID;
+    bar.style.cssText = [
+      'display:flex', 'align-items:center', 'gap:12px',
+      'height:22px', 'padding:0 12px', 'box-sizing:border-box',
+      'font:11px/22px "Microsoft YaHei UI","Microsoft YaHei","PingFang SC",ui-sans-serif,system-ui,sans-serif',
+      'color:' + p.fg, 'background:' + p.bg,
+      'border-top:none',
+      'overflow:hidden', 'white-space:nowrap',
+      'pointer-events:none', 'user-select:none', 'z-index:30'
+    ].join(';');
+    bar.innerHTML =
+      '<span id="tokbar-dot" style="width:6px;height:6px;border-radius:50%;background:' + p.dim + ';flex:0 0 auto"></span>' +
+      '<span id="tokbar-tps" style="color:' + p.strong + ';font-weight:600;font-size:12px;font-family:' + MONO + '">0.0</span>' +
+      '<span style="color:' + p.dim + ';letter-spacing:.3px">tok/s</span>' +
+      '<span style="color:' + p.dim + ';letter-spacing:.5px;font-weight:500">缓存命中</span>' +
+      '<span id="tokbar-cache" style="color:' + p.strong + ';font-family:' + MONO + '">—</span>' +
+      '<span id="tokbar-tok" style="color:' + p.dim + ';margin-left:auto"></span>';
+    return bar;
+  }
+
+  // 在输入框工具栏“完全访问”旁边插入截图按钮
+  function ensureShotButton() {
+    var host = null, group = null;
+    var divs = document.querySelectorAll('div');
+    for (var i = 0; i < divs.length; i++) {
+      var t = (divs[i].textContent || '').trim();
+      if (t === '完全访问' || t === '安全访问') {
+        var g = divs[i];
+        while (g && g.parentElement && !/shrink-0/.test(String(g.className || ''))) g = g.parentElement;
+        if (g && g.parentElement) { group = g; host = g.parentElement; break; }
+      }
+    }
+    if (!host) return;
+    var btn = document.getElementById('zcode-tokbar-shot');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'zcode-tokbar-shot';
+      btn.type = 'button';
+      btn.title = '截图（框选后自动填入输入框）';
+      btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+      btn.style.cssText = ['display:flex','align-items:center','justify-content:center','width:28px','height:28px','margin-left:2px','padding:0','background:transparent','border:none','border-radius:6px','color:inherit','cursor:pointer','flex:0 0 auto','opacity:.75'].join(';');
+      btn.addEventListener('mouseenter', function () { btn.style.opacity = '1'; btn.style.background = 'rgba(255,255,255,.08)'; });
+      btn.addEventListener('mouseleave', function () { btn.style.opacity = '.75'; btn.style.background = 'transparent'; });
+      btn.addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        fetch('http://127.0.0.1:9335/screenshot', { method: 'POST' }).catch(function () {});
+      });
+    }
+    if (btn.parentElement !== host || btn.previousElementSibling !== group) {
+      host.insertBefore(btn, group.nextSibling);
+    }
+  }
+
+  function ensure() {
+    var bar = document.getElementById(BAR_ID);
+    var scroller = findScroller();
+    var host = scroller ? scroller.parentElement : null;
+
+    if (host && host !== document.body) {
+      if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+      if (!bar) bar = buildBar();
+      bar.style.position = 'absolute';
+      bar.style.left = '0';
+      bar.style.right = '0';
+      bar.style.bottom = '0';
+      bar.style.width = 'auto';
+      bar.style.margin = '0';
+      bar.style.zIndex = '30';
+      bar.style.background = 'transparent';
+      if (bar.parentElement !== host) host.appendChild(bar);
+      if (scroller.style.marginBottom !== '22px') scroller.style.marginBottom = '22px';
+      return true;
+    }
+    return false;
+  }
+
+  function update(m) {
+    ensure();
+    var p = palette();
+    var dot = document.getElementById('tokbar-dot');
+    var tps = document.getElementById('tokbar-tps');
+    var cache = document.getElementById('tokbar-cache');
+    var tok = document.getElementById('tokbar-tok');
+    if (!dot) return;
+
+    function fmt(n) {
+      return n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(Math.round(n || 0));
+    }
+
+    dot.style.background = (m && m.running) ? p.good : p.dim;
+    dot.style.boxShadow = (m && m.running) ? ('0 0 6px ' + p.good) : 'none';
+
+    if (!m || !m.ok) {
+      tps.textContent = '—';
+      cache.textContent = '—';
+      cache.style.color = p.dim;
+      tok.textContent = '暂无数据';
+      return;
+    }
+    tps.textContent = (m.tps || 0).toFixed(1);
+    var pct = m.cacheHitRate || 0;
+    cache.textContent = pct.toFixed(1) + '%';
+    cache.style.color = p.strong;
+    tok.innerHTML = '<span style="font-family:' + MONO + '">' + (m.calls || 0) + '</span> 次 · ' +
+      '<span style="font-family:' + MONO + '">' + fmt(m.outputTokens) + '</span> out';
+  }
+
+  function ready() {
+    if (document.readyState !== 'complete') return false;
+    var el = findComposer();
+    if (!el) return false;
+    var r = el.getBoundingClientRect();
+    return r.width >= 60 && r.height >= 8 && r.top >= 0 && r.top <= window.innerHeight;
+  }
+
+  function tick() {
+    if (!installed) {
+      if (!ready()) { readyAt = 0; return; }
+      if (!readyAt) { readyAt = Date.now(); return; }
+      if (Date.now() - readyAt < 2500) return;
+      if (!ensure()) return;
+      installed = true;
+      setInterval(ensure, 1500);
+      new MutationObserver(function () {
+        if (!document.getElementById(BAR_ID)) ensure();
+      }).observe(document.body, { childList: true, subtree: true });
+      return;
+    }
+    ensure();
+  }
+
+  function poll() {
+    fetch(API, { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (m) { if (installed) update(m); })
+      .catch(function () {});
+  }
+
+  setInterval(tick, 300);
+  setInterval(poll, 800);
+})();
+</script>

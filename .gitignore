@@ -1,0 +1,17 @@
+node_modules/
+*.zip
+
+# 早期 MCP 面板方案（已废弃，不随仓库发布）
+src/
+plugin/
+dist/
+scripts/
+marketplace.json
+install-after-quit.bat
+test-*.mjs
+package.json.bak
+
+# 旧预览图
+docs/preview.png
+docs/tokbar-preview.png
+docs/tokbar-e2e.png

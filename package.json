@@ -1,0 +1,10 @@
+{
+  "name": "zcode-tokbar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ZCode token rate status bar (CDP injection or app.asar patch).",
+  "dependencies": {
+    "@electron/asar": "^4.3.1"
+  }
+}
