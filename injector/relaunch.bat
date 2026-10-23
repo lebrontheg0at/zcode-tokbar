@@ -23,4 +23,3 @@ if errorlevel 1 goto waitport
 
 start "" /min cmd /c "node ""%~dp0injector.mjs"" --port %PORT% --ctl-port 9334"
 timeout /t 2 /nobreak >nul
-start "" wscript.exe "%~dp0tokbar-tray.vbs"
