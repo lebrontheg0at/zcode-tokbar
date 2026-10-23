@@ -166,9 +166,13 @@
       if (req.url && req.url.startsWith('/screenshot')) {
         try {
           const script = path.join(os.homedir(), '.zcode', 'local-plugins', 'zcode-screenshot', 'scripts', 'capture.ps1');
-          cp.spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
-            detached: true, stdio: 'ignore', windowsHide: true,
-          }).unref();
+          const vbs = path.join(os.tmpdir(), 'zcode-tokbar-shot.vbs');
+          fs.writeFileSync(vbs, [
+            'Set sh = CreateObject("WScript.Shell")',
+            'sh.Run "powershell -NoProfile -ExecutionPolicy Bypass -File \"\"\" & WScript.Arguments(0) & \"\"\"", 0, False',
+            ''
+          ].join(String.fromCharCode(10)), 'utf8');
+          cp.spawn('wscript.exe', [vbs, script], { stdio: 'ignore' }).unref();
           res.end(JSON.stringify({ ok: true }));
         } catch (e) {
           res.end(JSON.stringify({ ok: false }));

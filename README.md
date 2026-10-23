@@ -80,6 +80,7 @@ ZCode 是 Electron 应用，给它加一个调试端口，就能往渲染层注�
 - 点一下 = 框选截图 → 图片自动填入输入框（走那个插件原本的 `capture.ps1`，和 `/screenshot`、全局热键完全一致）
 - **没装那个插件时按钮自动隐藏**，不影响本工具
 - 脚本路径可用环境变量 `TOKBAR_SHOT_SCRIPT` 覆盖
+- **如果截完没贴进输入框**：先跑一次插件的校准（`powershell -File capture.ps1 校准`，或直接点输入框后运行），因为 `capture.exe` 对 DPI 非感知，粘贴坐标需要按缩放比例校准
 
 > 两个项目是**独立的**：tokbar 只负责注入条子和这个按钮，截图能力完全由 zcode-screenshot 提供。
 

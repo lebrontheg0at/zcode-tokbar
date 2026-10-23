@@ -18,6 +18,13 @@ const DEBUG = `http://127.0.0.1:${PORT}`;
 const TICK_MS = 800;
 const SHOT_SCRIPT = process.env.TOKBAR_SHOT_SCRIPT ||
   path.join(os.homedir(), '.zcode', 'local-plugins', 'zcode-screenshot', 'scripts', 'capture.ps1');
+// 用 wscript 拉起截图脚本：wscript 是 GUI 程序，不会闪控制台，也不受 windowsHide 影响
+const SHOT_VBS = path.join(os.tmpdir(), 'zcode-tokbar-shot.vbs');
+const VBS_CODE = [
+  'Set sh = CreateObject("WScript.Shell")',
+  'sh.Run "powershell -NoProfile -ExecutionPolicy Bypass -File """ & WScript.Arguments(0) & """", 0, False',
+  ''
+].join(String.fromCharCode(10));
 const SETTLE_MS = 2500; // 界面就绪后，再等等才注入，避开启动期的布局抖动
 
 let visible = true;
@@ -135,6 +142,7 @@ const INSTALL_JS = String.raw`(() => {
   }
 
   // 在输入框工具栏“完全访问”旁边插入截图按钮
+  // 注意：React 重渲染可能克隆节点，addEventListener 会丢；这里每帧都重绑 onclick（幂等）
   function ensureShotButton() {
     var host = null, group = null;
     var divs = document.querySelectorAll('div');
@@ -147,26 +155,36 @@ const INSTALL_JS = String.raw`(() => {
       }
     }
     if (!host) return;
+
     var btn = document.getElementById('zcode-tokbar-shot');
+    if (btn && btn.dataset.tokbar !== '1') { btn.remove(); btn = null; }  // 清掉旧版本残留的监听器
     if (!btn) {
       btn = document.createElement('button');
       btn.id = 'zcode-tokbar-shot';
+      btn.dataset.tokbar = '1';
       btn.type = 'button';
       btn.title = '截图（框选后自动填入输入框）';
       btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
       btn.style.cssText = ['display:flex','align-items:center','justify-content:center','width:28px','height:28px','margin-left:2px','padding:0','background:transparent','border:none','border-radius:6px','color:inherit','cursor:pointer','flex:0 0 auto','opacity:.75'].join(';');
-      btn.addEventListener('mouseenter', function () { btn.style.opacity = '1'; btn.style.background = 'rgba(255,255,255,.08)'; });
-      btn.addEventListener('mouseleave', function () { btn.style.opacity = '.75'; btn.style.background = 'transparent'; });
-      btn.addEventListener('click', function (e) {
-        e.preventDefault(); e.stopPropagation();
-        fetch('http://127.0.0.1:9334/screenshot', { method: 'POST' }).catch(function () {});
-      });
+    }
+
+    // 每次确保事件绑定（用 onclick 属性，重复赋值不会叠加）
+    btn.onclick = function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      fetch('http://127.0.0.1:9334/screenshot', { method: 'POST' }).catch(function () {});
+    };
+    btn.onmouseenter = function () { btn.style.opacity = '1'; btn.style.background = 'rgba(255,255,255,.08)'; };
+    btn.onmouseleave = function () { btn.style.opacity = '.75'; btn.style.background = 'transparent'; };
+
+    if (btn.parentElement !== host || btn.previousElementSibling !== group) {
+      host.insertBefore(btn, group.nextSibling);
+    }
+    if (!btn.dataset.shotChecked) {
+      btn.dataset.shotChecked = '1';
       fetch('http://127.0.0.1:9334/status').then(function (r) { return r.json(); }).then(function (st) {
         if (st && st.shot === false) btn.style.display = 'none';
       }).catch(function () {});
-    }
-    if (btn.parentElement !== host || btn.previousElementSibling !== group) {
-      host.insertBefore(btn, group.nextSibling);
     }
   }
 
@@ -284,6 +302,8 @@ export const REMOVE_JS = String.raw`(() => {
 const RESET_JS = String.raw`(() => {
   window.__tokbarVisible = false;
   window.__tokbarInstalled = false;
+  const sbtn = document.getElementById('zcode-tokbar-shot');
+  if (sbtn) sbtn.remove();
   window.__tokbarGen = (window.__tokbarGen || 0) + 1;  // 让旧闭包的定时器/观察器失效
   const b = document.getElementById('zcode-tokbar');
   if (b) b.remove();
@@ -298,7 +318,7 @@ function startControlServer() {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (req.url === '/status' && req.method === 'GET') {
-      res.end(JSON.stringify({ ok: true, connected, visible, port: PORT, shot: fs.existsSync(SHOT_SCRIPT) }));
+      res.end(JSON.stringify({ ok: true, connected, visible, port: PORT, shot: fs.existsSync(SHOT_SCRIPT), shotScript: SHOT_SCRIPT }));
       return;
     }
     if (req.url === '/visible' && req.method === 'POST') {
@@ -312,9 +332,8 @@ function startControlServer() {
     }
     if (req.url === '/screenshot' && req.method === 'POST') {
       try {
-        spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', SHOT_SCRIPT], {
-          detached: true, stdio: 'ignore', windowsHide: true,
-        }).unref();
+        fs.writeFileSync(SHOT_VBS, VBS_CODE, 'utf8');
+        spawn('wscript.exe', [SHOT_VBS, SHOT_SCRIPT], { stdio: 'ignore' }).unref();
         res.end(JSON.stringify({ ok: true }));
       } catch (e) {
         res.end(JSON.stringify({ ok: false, error: String(e && e.message) }));
