@@ -86,7 +86,7 @@ ZCode 是 Electron 应用，给它加一个调试端口，就能往渲染层注�
 
 ### 位置怎么定的
 
-自适应：找页面上最靠下的输入框（`textarea` / `contenteditable`），向上找到"输入框容器"，把条子插在它后面、且仍在应用主列内部（所以它会占 22px 布局高度，不会盖住内容）。
+自适应：找页面上最靠下的输入框（`textarea` / `contenteditable`），向上找到"输入框容器"，把条子插在它后面、且仍在应用主列内部（条子覆盖在底部，**不挤压布局**，所以不会把输入框顶高）。
 
 如果 ZCode 的 DOM 结构特殊导致位置不对，改 `injector/injector.mjs` 里的 `findComposer()` / `ensure()` 即可。
 

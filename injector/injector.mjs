@@ -227,8 +227,7 @@ const INSTALL_JS = String.raw`(() => {
       bar.style.zIndex = '30';
       bar.style.background = 'transparent';
       if (bar.parentElement !== host) host.appendChild(bar);
-      // 给滚动区留出 22px，避免最后一条消息被条子盖住
-      if (scroller.style.marginBottom !== '22px') scroller.style.marginBottom = '22px';
+      if (scroller.style.marginBottom) scroller.style.marginBottom = '';  // 不能挤压布局，否则输入框会上移
       return;
     }
 
