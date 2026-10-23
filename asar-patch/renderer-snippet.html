@@ -148,7 +148,7 @@
       bar.style.width = 'auto';
       bar.style.margin = '0';
       bar.style.zIndex = '30';
-      bar.style.background = 'transparent';
+      bar.style.background = bgOf(host) || p.bg;  // 用对话区同色的不透明背景，盖住底层露出的边线
       if (bar.parentElement !== host) host.appendChild(bar);
       if (scroller.style.marginBottom) scroller.style.marginBottom = '';  // 不能挤压布局，否则输入框会上移
       return true;
