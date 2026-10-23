@@ -38,9 +38,11 @@ ZCode 是 Electron 应用，给它加一个调试端口，就能往渲染层注�
 > node injector\injector.mjs --port 9333
 > ```
 
-### 开关 / 入口：托盘图标
+### 开关 / 入口：托盘图标（可选，默认不自启）
 
-双击 `injector\tokbar-tray.vbs`（无窗口启动），托盘出现 **Token Bar** 图标，右键菜单：
+> 托盘**默认不会自动启动**，免得任务栏多一个图标。需要开关时手动双击 `injector\tokbar-tray.vbs`。
+
+启动后托盘出现 **Token Bar** 图标，右键菜单：
 
 | 菜单项 | 作用 |
 |---|---|
