@@ -1,0 +1,26 @@
+{
+  "description": "Token Bar auto-repatch hook: re-applies the app.asar patch after ZCode updates.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "process",
+            "command": "powershell.exe",
+            "args": [
+              "-NoProfile",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-Command",
+              "$exe='D:\\nodejs\\node.exe'; $root=Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent '$env:ZCODE_PLUGIN_ROOT'))); $mjs=Join-Path $root 'asar-patch\\install-asar.mjs'; if((Test-Path $mjs) -and (Test-Path $exe)){ & $exe $mjs 2>&1 | Out-File -Append (Join-Path (Split-Path -Parent $mjs) 'auto-install.log') }"
+            ],
+            "timeoutMs": 120000,
+            "async": true,
+            "statusMessage": "Token Bar: checking app.asar patch…"
+          }
+        ]
+      }
+    ]
+  }
+}

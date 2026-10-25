@@ -1,0 +1,5 @@
+{
+  "name": "zcode-tokbar-hook",
+  "version": "0.1.0",
+  "description": "Auto-repatch the app.asar tokbar patch after ZCode updates."
+}

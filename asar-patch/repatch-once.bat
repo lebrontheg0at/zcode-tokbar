@@ -9,6 +9,7 @@ if not errorlevel 1 ( timeout /t 2 /nobreak >nul & goto wait )
 echo [%date% %time%] repatching with --force >> "%LOG%"
 "D:\nodejs\node.exe" "asar-patch\install-asar.mjs" --force >> "%LOG%" 2>&1
 if errorlevel 1 ( echo [%date% %time%] REPATCH FAILED >> "%LOG%" & exit /b 1 )
+curl -s -m 5 "http://127.0.0.1:9335/smartcompact" >> "%LOG%" 2>&1
 echo [%date% %time%] repatched, starting ZCode >> "%LOG%"
 set "ZCODE="
 for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -File "injector\find-zcode.ps1"`) do set "ZCODE=%%P"
