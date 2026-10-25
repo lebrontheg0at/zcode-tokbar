@@ -148,6 +148,13 @@ if (mode === 'restore') {
 
 /* ---- install ---- */
 
+// --force：已有备份时先还原到备份，再按最新片段重打（用于修复补丁本身）
+if (process.argv.includes('--force') && fs.existsSync(BAK)) {
+  console.log('[force] 还原到备份后重打 ...');
+  fs.copyFileSync(BAK, ASAR);
+}
+
+
 const { json, dataStart } = readArchive(ASAR);
 const oldSize = fs.statSync(ASAR).size;
 const oldDataSize = oldSize - dataStart;

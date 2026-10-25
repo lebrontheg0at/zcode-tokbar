@@ -1,13 +1,17 @@
 <script>
 /* ===== ZCode Token Bar — renderer patch (app.asar) =====
- * 等界面挂载好后，在输入框下方插入速率条；每 800ms 从主进程的 127.0.0.1:9335 拉真实指标。
+ * 等界面挂载好后，把速率信息以内联形式放到输入框工具栏“发送圆钮”左侧；每 800ms 从主进程的 127.0.0.1:9335 拉真实指标。
+ * 整体包在 try-catch 里，任何异常静默吞掉，绝不弹错误框。
  */
 (function () {
+  try {
+
   var BAR_ID = 'zcode-tokbar';
   const MONO = 'ui-monospace,SFMono-Regular,Consolas,monospace';
   var API = 'http://127.0.0.1:9335/metrics';
   var installed = false;
   var readyAt = 0;
+  var shotRequest = null;  // {hide: bool} — 截图按钮设置，下次 /metrics 轮询时带上
 
   function isDark() {
     var el = document.getElementById('root') || document.body;
@@ -68,13 +72,12 @@
     var bar = document.createElement('div');
     bar.id = BAR_ID;
     bar.style.cssText = [
-      'display:flex', 'align-items:center', 'gap:12px',
-      'height:22px', 'padding:0 12px', 'box-sizing:border-box',
-      'font:11px/22px "Microsoft YaHei UI","Microsoft YaHei","PingFang SC",ui-sans-serif,system-ui,sans-serif',
-      'color:' + p.fg, 'background:' + p.bg,
-      'border-top:none',
+      'display:inline-flex', 'align-items:center', 'gap:8px',
+      'height:28px', 'padding:0 8px', 'box-sizing:border-box', 'flex:0 0 auto',
+      'font:11px/28px "Microsoft YaHei UI","Microsoft YaHei","PingFang SC",ui-sans-serif,system-ui,sans-serif',
+      'color:' + p.fg, 'background:transparent',
       'overflow:hidden', 'white-space:nowrap',
-      'pointer-events:none', 'user-select:none', 'z-index:30'
+      'pointer-events:none', 'user-select:none'
     ].join(';');
     bar.innerHTML =
       '<span id="tokbar-dot" style="width:6px;height:6px;border-radius:50%;background:' + p.dim + ';flex:0 0 auto"></span>' +
@@ -117,7 +120,10 @@
     btn.onclick = function (e) {
       e.preventDefault();
       e.stopPropagation();
-      fetch('http://127.0.0.1:9335/screenshot', { method: 'POST' }).catch(function () {});
+      var hide = false;
+      try { hide = localStorage.getItem('tokbarHideUI') === '1'; } catch (er) {}
+      // 搭 /metrics 轮询的便车：设置标记，下次轮询时触发截图（绕过所有 CSP/fetch 限制）
+      shotRequest = { hide: hide };
     };
     btn.onmouseenter = function () { btn.style.opacity = '1'; btn.style.background = 'rgba(255,255,255,.08)'; };
     btn.onmouseleave = function () { btn.style.opacity = '.75'; btn.style.background = 'transparent'; };
@@ -133,27 +139,139 @@
     }
   }
 
-  function ensure() {
-    var bar = document.getElementById(BAR_ID);
-    var scroller = findScroller();
-    var host = scroller ? scroller.parentElement : null;
-
-    if (host && host !== document.body) {
-      if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
-      if (!bar) bar = buildBar();
-      bar.style.position = 'absolute';
-      bar.style.left = '0';
-      bar.style.right = '0';
-      bar.style.bottom = '0';
-      bar.style.width = 'auto';
-      bar.style.margin = '0';
-      bar.style.zIndex = '30';
-      bar.style.background = bgOf(host) || p.bg;  // 用对话区同色的不透明背景，盖住底层露出的边线
-      if (bar.parentElement !== host) host.appendChild(bar);
-      if (scroller.style.marginBottom) scroller.style.marginBottom = '';  // 不能挤压布局，否则输入框会上移
-      return true;
+  // 找输入框卡片里最右下方的按钮（即发送圆钮）
+  function findSendButton() {
+    var comp = findComposer();
+    if (!comp) return null;
+    var compTop = comp.getBoundingClientRect().top;
+    var card = comp;
+    for (var i = 0; i < 6 && card; i++) card = card.parentElement;
+    if (!card) return null;
+    var btns = card.querySelectorAll('button, [role="button"]');
+    var best = null, bestX = -Infinity, bestY = -Infinity;
+    for (var j = 0; j < btns.length; j++) {
+      var r = btns[j].getBoundingClientRect();
+      if (r.width < 18 || r.height < 18) continue;   // 过滤图标碎屑
+      if (r.top < compTop - 4) continue;             // 只看输入行及以下（工具栏行）
+      if (r.left > bestX || (r.left === bestX && r.top > bestY)) {
+        bestX = r.left; bestY = r.top; best = btns[j];
+      }
     }
-    return false;
+    return best;
+  }
+
+  // ===== 截屏选项按钮（眼睛斜杠图标）：点击弹出「截屏时隐藏当前界面」开关 =====
+  function hideUIEnabled() {
+    try { return localStorage.getItem('tokbarHideUI') === '1'; } catch (e) { return false; }
+  }
+
+  function renderHidePopup(pop) {
+    var on = hideUIEnabled();
+    var p = palette();
+    var dark = isDark();
+    // 保存定位（cssText 会全部重置，需要在渲染后恢复）
+    var savedRight = pop.style.right;
+    var savedBottom = pop.style.bottom;
+    pop.style.cssText = [
+      'position:fixed', 'z-index:2147483600', 'display:block',
+      'min-width:200px', 'padding:10px 14px',
+      'background:' + (dark ? '#2b2b2b' : '#ffffff'),
+      'border:1px solid ' + p.line, 'border-radius:10px',
+      'box-shadow:0 8px 24px rgba(0,0,0,.35)',
+      'font:11px/1.4 "Microsoft YaHei UI","Microsoft YaHei",ui-sans-serif,system-ui,sans-serif',
+      'color:' + p.fg, 'cursor:pointer', 'user-select:none'
+    ].join(';');
+    pop.style.right = savedRight;
+    pop.style.top = 'auto';
+    pop.style.bottom = savedBottom;
+    pop.innerHTML =
+      '<span>截屏时隐藏当前界面</span>' +
+      '<span style="float:right;display:inline-block;width:28px;height:16px;border-radius:8px;position:relative;background:' +
+        (on ? p.good : 'rgba(128,128,128,.45)') + ';transition:background .15s">' +
+        '<i style="position:absolute;top:2px;left:' + (on ? '14px' : '2px') +
+        ';width:12px;height:12px;border-radius:50%;background:#fff;transition:left .15s"></i>' +
+      '</span>';
+    // 点击开关只切换状态 + 重渲染，不关闭弹窗
+    pop.onclick = function (ev) {
+      ev.stopPropagation();
+      ev.preventDefault();
+      try { localStorage.setItem('tokbarHideUI', hideUIEnabled() ? '0' : '1'); } catch (e2) {}
+      renderHidePopup(pop);
+    };
+    // 阻止 mousedown 冒泡（否则外层关闭监听会误关）
+    pop.onmousedown = function (ev) { ev.stopPropagation(); };
+  }
+
+  function ensureHideButton() {
+    var shot = document.getElementById('zcode-tokbar-shot');
+    if (!shot || !shot.parentElement) return;
+    var btn = document.getElementById('zcode-tokbar-hideui');
+    if (btn && btn.dataset.tokbar !== '1') { btn.remove(); btn = null; }
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'zcode-tokbar-hideui';
+      btn.dataset.tokbar = '1';
+      btn.type = 'button';
+      btn.title = '截屏选项';
+      btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+      btn.style.cssText = ['display:flex','align-items:center','justify-content:center','width:18px','height:28px','padding:0','background:transparent','border:none','border-radius:4px','color:inherit','cursor:pointer','flex:0 0 auto','opacity:.75'].join(';');
+      btn.onmouseenter = function () { btn.style.opacity = '1'; btn.style.background = 'rgba(255,255,255,.08)'; };
+      btn.onmouseleave = function () { btn.style.opacity = '.75'; btn.style.background = 'transparent'; };
+      btn.onclick = function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var pop = document.getElementById('zcode-tokbar-hideui-pop');
+        if (!pop) {
+          pop = document.createElement('div');
+          pop.id = 'zcode-tokbar-hideui-pop';
+          document.body.appendChild(pop);
+        }
+        var isOpen = pop.style.display === 'block';
+        if (isOpen) {
+          pop.style.display = 'none';
+          var svg0 = btn.querySelector('svg');
+          if (svg0) svg0.style.transform = '';
+          return;
+        }
+        renderHidePopup(pop);
+        var r = btn.getBoundingClientRect();
+        pop.style.right = (window.innerWidth - r.right) + 'px';
+        pop.style.top = 'auto';
+        pop.style.bottom = (window.innerHeight - r.top + 6) + 'px';  // 向上弹出
+        var svg1 = btn.querySelector('svg');
+        if (svg1) { svg1.style.transform = 'rotate(180deg)'; svg1.style.transition = 'transform .15s'; }
+        setTimeout(function () {
+          document.addEventListener('mousedown', function close(ev) {
+            var pp = document.getElementById('zcode-tokbar-hideui-pop');
+            var b = document.getElementById('zcode-tokbar-hideui');
+            if (pp && b && !pp.contains(ev.target) && ev.target !== b && !b.contains(ev.target)) {
+              pp.style.display = 'none';
+              var svg2 = b.querySelector('svg');
+              if (svg2) svg2.style.transform = '';
+              document.removeEventListener('mousedown', close);
+            }
+          });
+        }, 0);
+      };
+    }
+    if (btn.parentElement !== shot.parentElement || btn.previousElementSibling !== shot) {
+      shot.parentElement.insertBefore(btn, shot.nextSibling);
+    }
+  }
+
+  function ensure() {
+    ensureShotButton();
+    ensureHideButton();
+    var send = findSendButton();
+    if (!send || !send.parentElement) return false;
+    var bar = document.getElementById(BAR_ID);
+    if (!bar) bar = buildBar();
+    // 插到「发送圆钮左边那个元素」（即模型选择器）的左侧
+    var anchor = send.previousElementSibling || send;
+    if (bar.parentElement !== send.parentElement || bar.nextElementSibling !== anchor) {
+      send.parentElement.insertBefore(bar, anchor);
+    }
+    return true;
   }
 
   function update(m) {
@@ -212,13 +330,22 @@
   }
 
   function poll() {
-    fetch(API, { cache: 'no-store' })
+    var url = API;
+    if (shotRequest) {
+      url = API + '?shot=1&hide=' + (shotRequest.hide ? '1' : '0');
+      shotRequest = null;  // 只带一次
+    }
+    fetch(url, { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (m) { if (installed) update(m); })
       .catch(function () {});
   }
 
-  setInterval(tick, 300);
-  setInterval(poll, 800);
+  setInterval(function () { try { tick(); } catch (e) {} }, 300);
+  setInterval(function () { try { poll(); } catch (e) {} }, 800);
+
+  } catch (e) {
+    /* 渲染层任何异常都静默吞掉 */
+  }
 })();
 </script>
