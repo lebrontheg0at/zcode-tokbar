@@ -303,3 +303,5 @@ app.asar : D:\zcode\resources\app.asar
      è¿˜åŸï¼š node asar-patch/install-asar.mjs --restore
 [2026/10/25 ÖÜÈÕ 17:22:15.21] repatched, starting ZCode 
 [2026/10/25 ÖÜÈÕ 17:22:15.53] repatch done 
+[2026/10/27 ÖÜ¶ş  1:07:11.05] repatch waiting for ZCode to exit 
+[2026/10/27 ÖÜ¶ş  1:09:04.59] repatch waiting for ZCode to exit 

@@ -188,91 +188,10 @@
       } catch (e) { _log('screenshot', e); }
     }
 
-    // ===== 智能压缩：生成摘要 → 新对话 → 粘贴到输入框（方案 B） =====
-    var COMPACT_PS = path.join(os.tmpdir(), 'zcode-tokbar-compact.ps1');
-    function ensureCompactPs() {
-      if (fs.existsSync(COMPACT_PS)) return;
-      var L = String.fromCharCode(10);
-      fs.writeFileSync(COMPACT_PS, [
-        'param([string]$text, [string]$title)',
-        'Add-Type -AssemblyName System.Windows.Forms',
-        'Add-Type @\'',
-        'using System;using System.Runtime.InteropServices;',
-        'public class ZW2{',
-        ' [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);',
-        ' [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int c);',
-        ' [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);',
-        ' [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);',
-        '}',
-        '\'@',
-        '$p = Get-Process ZCode -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1',
-        'if(-not $p){ Write-Host "ERROR: no ZCode window"; exit 1 }',
-        'if([ZW2]::IsIconic($p.MainWindowHandle)){ [ZW2]::ShowWindow($p.MainWindowHandle,9) | Out-Null }',
-        '[ZW2]::SetForegroundWindow($p.MainWindowHandle) | Out-Null',
-        'Start-Sleep -Milliseconds 600',
-        'Set-Clipboard -Value $text',
-        'Start-Sleep -Milliseconds 300',
-        '[System.Windows.Forms.SendKeys]::SendWait("^(t)")',
-        'Start-Sleep -Milliseconds 1200',
-        '[System.Windows.Forms.SendKeys]::SendWait("^v")',
-        'Start-Sleep -Milliseconds 500',
-        'Write-Host "OK: summary pasted into new conversation"',
-      ].join(L), 'utf8');
-    }
-
-    function generateSummary() {
-      poll();
-      var list = turns();
-      if (!list.length) return null;
-      var lines = [];
-      lines.push('=== 会话上下文摘要（zcode-tokbar 生成） ===');
-      lines.push('');
-      lines.push('模型: ' + (records.length ? records[records.length-1].model : '?') + ' | 轮次: ' + list.length + ' | 调用: ' + records.length);
-      lines.push('');
-      // 按轮次摘要
-      lines.push('--- 对话轮次时间线 ---');
-      for (var i = 0; i < list.length; i++) {
-        var t = list[i];
-        var tp = t.ms > 0 ? (t.out / (t.ms / 1000)).toFixed(0) : '0';
-        lines.push('轮' + (i+1) + ': ' + t.calls + '次调用, ' + t.out + ' tok 输出, ' + Math.round(t.ms/1000) + 's, 缓存' + (t.input>0?Math.round(t.cache/t.input*100):0) + '%');
-      }
-      lines.push('');
-      lines.push('--- 上下文统计 ---');
-      lines.push('总输出 token: ' + records.reduce(function(s,r){return s+r.outputTokens;},0));
-      lines.push('最新输入 token: ' + (list.length ? list[list.length-1].input : 0));
-      lines.push('最新缓存命中: ' + (list.length ? list[list.length-1].cache : 0));
-      lines.push('');
-      lines.push('请基于以上摘要继续工作。');
-      return lines.join(String.fromCharCode(10));
-    }
-
-    function smartCompact() {
-      var summary = generateSummary();
-      if (!summary) return JSON.stringify({ ok: false, message: '没有会话数据' });
-      ensureCompactPs();
-      try {
-        cp.exec(
-          'powershell -NoProfile -ExecutionPolicy Bypass -File "' + COMPACT_PS + '"' +
-          ' -text "' + summary.replace(/"/g, '\\\\"') + '"' +
-          ' -title "compact"',
-          { timeout: 30000, windowsHide: false },
-          function(err, stdout) { _log('compact', 'out=' + String(stdout).trim()); }
-        );
-        return JSON.stringify({ ok: true, summaryLength: summary.length });
-      } catch (e) {
-        return JSON.stringify({ ok: false, error: String(e && e.message) });
-      }
-    }
-
     const server = http.createServer((req, res) => {
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Cache-Control', 'no-store');
-      if (req.url && req.url.startsWith('/smartcompact')) {
-        var result = smartCompact();
-        res.end(result);
-        return;
-      }
       if (req.url && req.url.startsWith('/metrics')) {
         try {
           const q = req.url.indexOf('?');
