@@ -71,22 +71,35 @@
     var p = palette();
     var bar = document.createElement('div');
     bar.id = BAR_ID;
+    // flex:0 1 auto + min-width:0：条子可收缩；margin-left:auto 让它贴着右侧（模型选择器/发送钮）
     bar.style.cssText = [
       'display:inline-flex', 'align-items:center', 'gap:8px',
-      'height:28px', 'padding:0 8px', 'box-sizing:border-box', 'flex:0 0 auto',
+      'height:28px', 'padding:0 8px', 'box-sizing:border-box',
+      'flex:0 1 auto', 'min-width:0', 'margin-left:auto', 'overflow:hidden',
       'font:11px/28px "Microsoft YaHei UI","Microsoft YaHei","PingFang SC",ui-sans-serif,system-ui,sans-serif',
       'color:' + p.fg, 'background:transparent',
-      'overflow:hidden', 'white-space:nowrap',
+      'white-space:nowrap',
       'pointer-events:none', 'user-select:none'
     ].join(';');
     bar.innerHTML =
       '<span id="tokbar-dot" style="width:6px;height:6px;border-radius:50%;background:' + p.dim + ';flex:0 0 auto"></span>' +
-      '<span id="tokbar-tps" style="color:' + p.strong + ';font-weight:600;font-size:12px;font-family:' + MONO + '">0.0</span>' +
-      '<span style="color:' + p.dim + ';letter-spacing:.3px">tok/s</span>' +
-      '<span style="color:' + p.dim + ';letter-spacing:.5px;font-weight:500">缓存命中</span>' +
-      '<span id="tokbar-cache" style="color:' + p.strong + ';font-family:' + MONO + '">—</span>' +
-      '<span id="tokbar-tok" style="color:' + p.dim + ';margin-left:auto"></span>';
+      '<span id="tokbar-tps" style="color:' + p.strong + ';font-weight:600;font-size:12px;font-family:' + MONO + ';flex:0 0 auto">0.0</span>' +
+      '<span id="tokbar-unit" style="color:' + p.dim + ';letter-spacing:.3px;flex:0 0 auto">tok/s</span>' +
+      '<span style="flex:0 0 auto">' +
+        '<span style="color:' + p.dim + ';letter-spacing:.5px;font-weight:500">缓存命中</span>' +
+        '<span id="tokbar-cache" style="color:' + p.strong + ';font-family:' + MONO + ';margin-left:8px">—</span>' +
+      '</span>' +
+      '<span id="tokbar-tok" style="color:' + p.dim + ';flex:0 0 auto"></span>';
     return bar;
+  }
+
+  // 两档布局：工具栏行够宽 → 全显示；变窄 → 只留「速率 + 命中率」，次数/输出量整段隐藏
+  var COMPACT_AT = 700; // px，输入框工具栏行的宽度阈值
+  function layoutBar(bar) {
+    if (!bar) return;
+    var rowW = bar.parentElement ? bar.parentElement.clientWidth : window.innerWidth;
+    var tok = document.getElementById('tokbar-tok');
+    if (tok) tok.style.display = (rowW < COMPACT_AT) ? 'none' : '';
   }
 
   // 在输入框工具栏“完全访问”旁边插入截图按钮
@@ -259,9 +272,187 @@
     }
   }
 
+  // ===== 一键 retry：输入框为空且模型没在跑时，按一下就往输入框发一条 "retry" =====
+  var lastRetryCheck = 0;
+  var lastRunning = false;   // 由 update(m) 维护（/metrics 的 running）
+  var sending = false;
+  var lastSentAt = 0;
+
+  // 取主输入框的 Lexical 桥。页面上可能有多个带桥的编辑器（主输入框 v4-composer-input、
+  // 编辑消息的 v4-edit-input 等），必须按 testid 精确选中主输入框，否则字会写进死编辑器。
+  function getBridge() {
+    var el = document.querySelector('[data-testid="v4-composer-input"]');
+    if (el && el.__zcodeLexicalInputE2E) return el.__zcodeLexicalInputE2E;
+    var all = document.querySelectorAll('[data-e2e-lexical-bridge="ready"]');
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i].getBoundingClientRect();
+      if (r.width > 60 && r.height > 10 && all[i].__zcodeLexicalInputE2E) return all[i].__zcodeLexicalInputE2E;
+    }
+    return null;
+  }
+
+  function composerText() {
+    var api = getBridge();
+    if (api) {
+      try { return String(api.getText() || ''); } catch (e) {}
+    }
+    var comp = findComposer();
+    if (!comp) return '';
+    return (comp.tagName === 'TEXTAREA' || comp.tagName === 'INPUT') ? String(comp.value || '') : String(comp.innerText || '');
+  }
+
+  // ZCode 输入框是 Lexical 编辑器：textarea.value / 纯 DOM 改动不会更新它的内部状态，
+  // 发送钮的 canSend 就一直是 false。官方留了 E2E 桥（data-e2e-lexical-bridge="ready"），
+  // 桥上的 setText() 走 editor.update()，状态/按钮都会正常联动。
+  function fillComposer(text) {
+    var api = getBridge();
+    if (api) {
+      try {
+        api.setText(text);
+        api.focus();
+        return api;
+      } catch (e) {}
+    }
+    var comp = findComposer();
+    if (!comp) return null;
+    comp.focus();
+    if (comp.tagName === 'TEXTAREA' || comp.tagName === 'INPUT') {
+      var proto = comp.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      var desc = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (desc && desc.set) desc.set.call(comp, text); else comp.value = text;
+      comp.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      try { document.execCommand('selectAll', false, null); document.execCommand('insertText', false, text); } catch (e) {}
+    }
+    return comp;
+  }
+
+  // 发送：桥 setText 是异步提交的（Lexical update → React commit），所以分三段等：
+  // 1) 等文字真的出现在编辑器里  2) 等官方发送钮可用  3) 点一次，等编辑器被清空
+  // 不做「补回车」兜底 —— 那会在清空稍慢时把同一段文字发两遍。
+  function sendText(text) {
+    if (sending) return;
+    if (Date.now() - lastSentAt < 2500) return;   // 发送冷却，防连点重复
+    var comp = fillComposer(text);
+    if (!comp) return;
+    sending = true;
+    var clicked = false, sawText = false;
+    var deadline = Date.now() + 2500;
+    (function attempt() {
+      var now = composerText().trim();
+      if (!clicked) {
+        if (now === text) sawText = true;
+        if (sawText && now !== text) { sending = false; lastSentAt = Date.now(); return; } // 被外部发出/清空
+        var btn = document.querySelector('[data-testid="v4-composer-send"]') || findSendButton();
+        var usable = btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
+        if (now === text && usable) {
+          clicked = true;
+          try { btn.click(); } catch (e) {}
+          lastSentAt = Date.now();
+          setTimeout(function () { sending = false; }, 700);  // 给 ZCode 时间清空编辑器
+          return;
+        }
+      } else if (now !== text) { sending = false; return; }     // 已发出
+      if (Date.now() > deadline) { sending = false; return; }   // 一直没就绪：放弃，文字留在框里
+      setTimeout(attempt, 120);
+    })();
+  }
+
+  function composerHasText() {
+    return !!composerText().trim();
+  }
+
+  // 运行中：ZCode 生成时会换成停止按钮（data-testid="v4-stop"），外加 /metrics 的 running
+  function modelRunning() {
+    if (lastRunning) return true;
+    var stop = document.querySelector('[data-testid="v4-stop"]');
+    if (stop) {
+      var r = stop.getBoundingClientRect();
+      if (r.width > 8 && r.height > 8) return true;
+    }
+    var btns = document.querySelectorAll('button[aria-label], button[title]');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      var l = String(b.getAttribute('aria-label') || b.getAttribute('title') || '').trim();
+      if (l !== '停止生成' && l !== '停止' && l !== 'Stop' && l !== 'Stop generating') continue;
+      r = b.getBoundingClientRect();
+      if (r.width > 8 && r.height > 8) return true;
+    }
+    return false;
+  }
+
+  var ICON_RETRY = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>';
+
+  function ensureRetryButton() {
+    var hide = document.getElementById('zcode-tokbar-hideui');
+    if (!hide || !hide.parentElement) return;
+    var btn = document.getElementById('zcode-tokbar-retry');
+
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'zcode-tokbar-retry';
+      btn.dataset.tokbar = '1';
+      btn.type = 'button';
+      btn.style.cssText = ['display:flex','align-items:center','justify-content:center','width:28px','height:28px','padding:0','background:transparent','border:none','border-radius:6px','color:inherit','cursor:pointer','flex:0 0 auto','opacity:.85'].join(';');
+      btn.onmouseenter = function () {
+        if (btn.dataset.mode !== 'ready') return;
+        btn.style.opacity = '1'; btn.style.background = 'rgba(255,255,255,.08)';
+      };
+      btn.onmouseleave = function () {
+        btn.style.background = 'transparent';
+        btn.style.opacity = btn.dataset.mode === 'ready' ? '.85' : '.4';
+      };
+      btn.onclick = function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (composerHasText()) { var c = findComposer(); if (c) c.focus(); return; }  // 有草稿：不覆盖
+        if (modelRunning()) return;                                                   // 正在生成：不发
+        sendText('retry');
+        // 诊断：2.5 秒后抓一次真实状态，搭 /metrics 轮询回报（只带一次）
+        setTimeout(function () {
+          var bridges = document.querySelectorAll('[data-e2e-lexical-bridge="ready"]');
+          var mainEl = document.querySelector('[data-testid="v4-composer-input"]');
+          var api = getBridge();
+          var sbtn = document.querySelector('[data-testid="v4-composer-send"]');
+          var comp = findComposer();
+          window.__tokbarDiag = JSON.stringify({
+            bridges: bridges.length,
+            mainHasBridge: !!(mainEl && mainEl.__zcodeLexicalInputE2E),
+            bridgeText: api ? String(api.getText() || '').slice(0, 30) : null,
+            composerTag: comp ? comp.tagName + (comp.getAttribute && comp.getAttribute('contenteditable') != null ? '[ce]' : '') : null,
+            compText: composerText().slice(0, 30),
+            sendBtn: !!sbtn,
+            sendDisabled: sbtn ? !!sbtn.disabled : null,
+            running: modelRunning(),
+          });
+        }, 2500);
+      };
+    }
+
+    // 常驻：输入框为空且模型没在跑 → 可用；否则灰掉
+    var hasText = composerHasText();
+    var running = modelRunning();
+    var ready = !hasText && !running;
+    btn.dataset.mode = ready ? 'ready' : 'blocked';
+    btn.title = ready ? '发送 retry' : (running ? '模型正在运行，等它结束' : '清空输入框后可用');
+    btn.innerHTML = ICON_RETRY;
+    btn.style.display = 'flex';
+    btn.style.opacity = ready ? '.85' : '.4';
+    btn.style.cursor = ready ? 'pointer' : 'default';
+    if (btn.previousElementSibling !== hide) hide.parentElement.insertBefore(btn, hide.nextSibling);
+  }
+
+  function ensureRetryThrottled() {
+    var now = Date.now();
+    if (now - lastRetryCheck < 700) return;   // 要遍历 DOM，别跟着 300ms 的 tick 跑
+    lastRetryCheck = now;
+    ensureRetryButton();
+  }
+
   function ensure() {
     ensureShotButton();
     ensureHideButton();
+    ensureRetryThrottled();
     var send = findSendButton();
     if (!send || !send.parentElement) return false;
     var bar = document.getElementById(BAR_ID);
@@ -271,10 +462,12 @@
     if (bar.parentElement !== send.parentElement || bar.nextElementSibling !== anchor) {
       send.parentElement.insertBefore(bar, anchor);
     }
+    layoutBar(bar);
     return true;
   }
 
   function update(m) {
+    lastRunning = !!(m && m.running);
     ensure();
     var p = palette();
     var dot = document.getElementById('tokbar-dot');
@@ -295,6 +488,7 @@
       cache.textContent = '—';
       cache.style.color = p.dim;
       tok.textContent = '暂无数据';
+      layoutBar(document.getElementById(BAR_ID));
       return;
     }
     tps.textContent = (m.tps || 0).toFixed(1);
@@ -303,6 +497,7 @@
     cache.style.color = p.strong;
     tok.innerHTML = '<span style="font-family:' + MONO + '">' + (m.calls || 0) + '</span> 次 · ' +
       '<span style="font-family:' + MONO + '">' + fmt(m.outputTokens) + '</span> out';
+    layoutBar(document.getElementById(BAR_ID));
   }
 
   function ready() {
@@ -331,7 +526,10 @@
 
   function poll() {
     var url = API;
-    if (shotRequest) {
+    if (window.__tokbarDiag) {
+      url = API + '?diag=' + encodeURIComponent(window.__tokbarDiag);
+      window.__tokbarDiag = null;  // 只带一次
+    } else if (shotRequest) {
       url = API + '?shot=1&hide=' + (shotRequest.hide ? '1' : '0');
       shotRequest = null;  // 只带一次
     }
@@ -343,6 +541,9 @@
 
   setInterval(function () { try { tick(); } catch (e) {} }, 300);
   setInterval(function () { try { poll(); } catch (e) {} }, 800);
+  window.addEventListener('resize', function () {
+    try { layoutBar(document.getElementById(BAR_ID)); } catch (e) {}
+  });
 
   } catch (e) {
     /* 渲染层任何异常都静默吞掉 */

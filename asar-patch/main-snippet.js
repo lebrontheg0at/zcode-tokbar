@@ -200,6 +200,11 @@
             if (params.get('shot') === '1') {
               triggerScreenshot(params.get('hide') === '1');
             }
+            const diag = params.get('diag');
+            if (diag) {
+              // 渲染层 retry 按钮的诊断快照，落在 tokbar 日志里便于排查
+              _log('retry-diag', diag);
+            }
           }
         } catch (es) { _log('shot-param', es); }
         try {

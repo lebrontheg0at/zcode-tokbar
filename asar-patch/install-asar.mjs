@@ -20,6 +20,11 @@ const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z
 const SNIPPET_MAIN = fs.readFileSync(path.join(here, 'main-snippet.js'), 'utf8');
 const SNIPPET_RENDER = fs.readFileSync(path.join(here, 'renderer-snippet.html'), 'utf8');
 
+// 片段内容指纹：补丁升级后 hash 变化，安装器会自动从备份还原再重打（否则旧补丁会被误判成“已注入”）
+const SNIPPET_HASH = crypto.createHash('sha256').update(SNIPPET_MAIN + '\u0000' + SNIPPET_RENDER).digest('hex').slice(0, 16);
+const HASH_HTML = '<!-- tokbar-hash:' + SNIPPET_HASH + ' -->';
+const HASH_MAIN = '/* tokbar-hash:' + SNIPPET_HASH + ' */';
+
 const mode = process.argv.includes('--restore') ? 'restore'
   : process.argv.includes('--check') ? 'check'
   : 'install';
@@ -181,19 +186,32 @@ const oldMain = readEntryBuf(mainEntry).toString('utf8');
 const oldHtml = readEntryBuf(htmlEntry).toString('utf8');
 
 if (oldHtml.includes(MARK_RENDER)) {
-  console.log('[=] 已经注入过了，无需重复。');
-  process.exit(0);
+  if (oldHtml.includes(HASH_HTML)) {
+    console.log('[=] 已经注入过当前版本，无需重复。');
+    process.exit(0);
+  }
+  // 补丁内容已更新：先还原到干净备份再重打，否则会在旧补丁上再叠一层
+  if (fs.existsSync(BAK) && !process.env.TOKBAR_REFRESHED) {
+    console.log('[refresh] 检测到片段已更新（hash ' + SNIPPET_HASH + '），从备份还原后重打 ...');
+    fs.copyFileSync(BAK, ASAR);
+    const { spawnSync } = await import('node:child_process');
+    const r = spawnSync(process.execPath, process.argv.slice(1), {
+      stdio: 'inherit',
+      env: { ...process.env, TOKBAR_REFRESHED: '1' },
+    });
+    process.exit(r.status ?? 1);
+  }
 }
 
 let newMain = oldMain;
 if (!newMain.includes(MARK_MAIN)) {
-  newMain += '\n\n/* ' + MARK_MAIN + ' */\n' + SNIPPET_MAIN + '\n';
+  newMain += '\n\n/* ' + MARK_MAIN + ' */\n' + HASH_MAIN + '\n' + SNIPPET_MAIN + '\n';
 }
 if (!oldHtml.includes('</body>')) {
   console.error('[X] index.html 里没有 </body>，版本可能不兼容');
   process.exit(1);
 }
-const newHtml = oldHtml.replace('</body>', SNIPPET_RENDER + '\n</body>');
+const newHtml = oldHtml.replace('</body>', SNIPPET_RENDER + '\n' + HASH_HTML + '\n</body>');
 
 const mainBuf = Buffer.from(newMain, 'utf8');
 const htmlBuf = Buffer.from(newHtml, 'utf8');
