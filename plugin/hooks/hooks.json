@@ -1,0 +1,26 @@
+{
+  "description": "ZCode Toolkit auto-repatch hook: re-applies the app.asar patch and agent-runtime sanitizer after ZCode updates.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "process",
+            "command": "powershell.exe",
+            "args": [
+              "-NoProfile",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-Command",
+              "$exe='D:\\nodejs\\node.exe'; $root=Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent '$env:ZCODE_PLUGIN_ROOT'))); $log=Join-Path $root 'asar-patch\\auto-install.log'; foreach($rel in @('asar-patch\\install-asar.mjs','agent-patch\\install-agent-fix.mjs')){ $m=Join-Path $root $rel; if((Test-Path $m) -and (Test-Path $exe)){ & $exe $m 2>&1 | Out-File -Append $log } }"
+            ],
+            "timeoutMs": 120000,
+            "async": true,
+            "statusMessage": "ZCode Toolkit: checking patches…"
+          }
+        ]
+      }
+    ]
+  }
+}

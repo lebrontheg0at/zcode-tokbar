@@ -1,9 +1,9 @@
 {
-  "name": "zcode-tokbar",
+  "name": "zcode-toolkit",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "ZCode token rate status bar (CDP injection or app.asar patch).",
+  "description": "ZCode Toolkit: inline token-rate bar, region screenshot, one-click retry, and agent-side request sanitizer for the ZCode desktop app.",
   "dependencies": {
     "@electron/asar": "^4.3.1"
   }

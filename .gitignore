@@ -1,26 +1,14 @@
 node_modules/
 *.zip
+*.log
 
-# 早期 MCP 面板方案（已废弃，不随仓库发布）
-src/
-plugin/
-dist/
-scripts/
-marketplace.json
-install-after-quit.bat
-test-*.mjs
-package.json.bak
+# 构建产物
+screenshot-plugin/capture.exe
 
-# 旧预览图
-docs/preview.png
-docs/tokbar-preview.png
-docs/tokbar-e2e.png
+# 测试产物
+tests/*.html
+tests/*.png
 
-# 布局自测产物（harness 本身 layout-test.mjs 保留）
-.test-layout/layout-test.html
-.test-layout/*.png
-
-# 运行日志与本地测试产物
-asar-patch/auto-install.log
-.test-layout/*.html
-.test-layout/*.png
+# 文档图（保留 README 用图）
+docs/*.png
+!docs/toolkit-bar.png

@@ -1,4 +1,4 @@
-/* ===== ZCode Token Bar — main process patch (app.asar) =====
+/* ===== ZCode Toolkit — main process patch (app.asar) =====
  * 只提供 /metrics 端点。截图触发通过 /metrics?shot=1 搭车（渲染层按钮设置标记后，
  * 下一次 /metrics 轮询带上参数，主进程看到后 spawn PowerShell 截图脚本）。
  */
@@ -7,7 +7,7 @@
     const _fs = await import('node:fs');
     const _os = await import('node:os');
     const _path = await import('node:path');
-    const _errLog = _path.join(_os.tmpdir(), 'zcode-tokbar-errors.log');
+    const _errLog = _path.join(_os.tmpdir(), 'zcode-toolkit.log');
     const _log = (tag, e) => {
       try {
         _fs.appendFileSync(_errLog, new Date().toISOString() + ' [' + tag + '] ' + String(e && e.stack || e) + String.fromCharCode(10));

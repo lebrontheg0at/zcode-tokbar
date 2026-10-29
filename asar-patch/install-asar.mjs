@@ -13,8 +13,8 @@ import { pipeline } from 'node:stream/promises';
 import { execSync } from 'node:child_process';
 import * as asar from '@electron/asar';
 
-const MARK_MAIN = 'ZCode Token Bar — main process patch';
-const MARK_RENDER = 'ZCode Token Bar — renderer patch';
+const MARK_MAIN = 'ZCode Toolkit — main process patch';
+const MARK_RENDER = 'ZCode Toolkit — renderer patch';
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const SNIPPET_MAIN = fs.readFileSync(path.join(here, 'main-snippet.js'), 'utf8');

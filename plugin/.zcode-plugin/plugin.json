@@ -1,0 +1,6 @@
+{
+  "name": "zcode-toolkit",
+  "version": "0.2.0",
+  "description": "ZCode Toolkit auto-repatch hook: re-applies the app.asar patch and agent-runtime sanitizer after ZCode updates.",
+  "author": { "name": "Saber" }
+}
