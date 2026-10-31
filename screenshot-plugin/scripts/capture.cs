@@ -595,8 +595,7 @@ namespace ZCodeShot
             if (pids.Count == 0) return IntPtr.Zero;
 
             IntPtr best = IntPtr.Zero;
-            long bestArea = -1;
-            bool bestVisible = false;
+            long bestScore = -1;
             EnumWindowsProc cb = delegate (IntPtr h, IntPtr l)
             {
                 try
@@ -606,14 +605,15 @@ namespace ZCodeShot
                     if (!pids.Contains(pid)) return true;
                     RECT r;
                     if (!GetWindowRect(h, out r)) return true;
+                    bool iconic = IsIconic(h);
                     long w = r.Right - r.Left, hh = r.Bottom - r.Top;
-                    if (w < 300 || hh < 200) return true;   // 跳过托盘/工具/隐藏的辅助窗口
+                    // 最小化窗口的 rect 是 -32000 处的 160x28 假矩形，不能按尺寸过滤它
+                    if (!iconic && (w < 300 || hh < 200)) return true;   // 跳过托盘/工具/隐藏辅助窗口
+                    long area = iconic ? 1 : w * hh;
                     bool vis = IsWindowVisible(h);
-                    long area = w * hh;
-                    if (best == IntPtr.Zero || (vis && !bestVisible) || (vis == bestVisible && area > bestArea))
-                    {
-                        best = h; bestArea = area; bestVisible = vis;
-                    }
+                    // 优先级：可见的常规窗口 > 最小化窗口（会还原成大窗） > 隐藏窗口
+                    long score = (vis && !iconic ? 200000000000L : 0) + (iconic ? 100000000000L : 0) + area;
+                    if (score > bestScore) { best = h; bestScore = score; }
                 }
                 catch { }
                 return true;
@@ -655,7 +655,14 @@ namespace ZCodeShot
                 }
                 hGlobal = Marshal.AllocHGlobal(dib.Length);
                 Marshal.Copy(dib, 0, hGlobal, dib.Length);
-                if (OpenClipboard(IntPtr.Zero))
+                // 剪贴板可能被别的程序短暂占用：重试打开，别静默丢图
+                bool opened = false;
+                for (int i = 0; i < 10 && !opened; i++)
+                {
+                    opened = OpenClipboard(IntPtr.Zero);
+                    if (!opened) Thread.Sleep(30);
+                }
+                if (opened)
                 {
                     try
                     {
@@ -665,6 +672,7 @@ namespace ZCodeShot
                     }
                     finally { CloseClipboard(); }
                 }
+                else Dbg("clipboard: OpenClipboard failed after retries");
             }
             catch (Exception ex) { Dbg("clipboard: " + ex.Message); }
             finally { if (hGlobal != IntPtr.Zero) Marshal.FreeHGlobal(hGlobal); }
