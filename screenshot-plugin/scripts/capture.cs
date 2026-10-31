@@ -503,9 +503,11 @@ namespace ZCodeShot
                     Dbg("paste: summoning zcode iconic=" + IsIconic(target) + " visible=" + IsWindowVisible(target));
                 }
                 EnsureVisible(target);
+                NudgeRepaint(target);
                 ForceForeground(target);
                 WaitForeground(target, 1000);
                 EnsureVisible(target);
+                NudgeRepaint(target);
                 if (GetForegroundWindow() != target) { ForceForeground(target); EnsureVisible(target); } // 再抢一次
                 Dbg("paste: foreground ok iconic=" + IsIconic(target) + " visible=" + IsWindowVisible(target));
                 // 点击校准过的输入框位置点亮光标（/screenshot 校准 记录），未校准则直接粘贴到当前焦点
@@ -541,6 +543,22 @@ namespace ZCodeShot
                 Dbg("paste: Ctrl+V sent");
             }
             catch (Exception ex) { Dbg("paste EXCEPTION: " + ex.Message); }
+        }
+
+        [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+        // Electron 窗口从托盘隐藏态被原生 ShowWindow 拉起时，Chromium 合成器常不恢复出帧 → 整窗纯黑。
+        // 强做一次 ±1px 的尺寸抖动，让它重走一遍可见性/合成路径。
+        static void NudgeRepaint(IntPtr h)
+        {
+            if (h == IntPtr.Zero) return;
+            RECT r;
+            if (!GetWindowRect(h, out r)) return;
+            int w = r.Right - r.Left, ht = r.Bottom - r.Top;
+            const uint SWP_NOMOVE = 0x2, SWP_NOZORDER = 0x4, SWP_FRAMECHANGED = 0x20;
+            SetWindowPos(h, IntPtr.Zero, 0, 0, w, ht + 1, SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            SetWindowPos(h, IntPtr.Zero, 0, 0, w, ht, SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            Dbg("repaint nudge applied");
         }
 
         // 兜底：ZCode 若真的被藏起来/最小化（它自己的失焦收托盘逻辑），这里强制还原

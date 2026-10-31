@@ -133,7 +133,7 @@
     // 最小化/恢复 ZCode 窗口
     var WIN_PS = path.join(os.tmpdir(), 'zcode-tokbar-win.ps1');
     function ensureWinPs() {
-      if (fs.existsSync(WIN_PS)) return;
+      // 每次都覆盖：脚本很小，且旧版缓存会让自己永远用不上新逻辑
       var L = String.fromCharCode(10);
       fs.writeFileSync(WIN_PS,
         'param([string]$mode)' + L +
@@ -142,12 +142,19 @@
         'public class ZW{' + L +
         ' [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int c);' + L +
         ' [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);' + L +
+        ' [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out RECT r);' + L +
+        ' [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h,IntPtr a,int x,int y,int w,int h2,uint f);' + L +
+        ' public struct RECT{public int L,T,R,B;}' + L +
+        ' public static void Nudge(IntPtr h){' + L +
+        '  RECT r;if(!GetWindowRect(h,out r))return;int w=r.R-r.L,hh=r.B-r.T;' + L +
+        '  SetWindowPos(h,IntPtr.Zero,0,0,w,hh+1,0x26);SetWindowPos(h,IntPtr.Zero,0,0,w,hh,0x26);' + L +
+        ' }' + L +
         '}' + L +
         "'" + '@' + L +
         '$p = Get-Process ZCode -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 }' + L +
         'if($p){' + L +
         '  if($mode -eq "min"){ $p | ForEach-Object { if(-not [ZW]::IsIconic($_.MainWindowHandle)){ [ZW]::ShowWindow($_.MainWindowHandle,6) } } }' + L +
-        '  else{ $p | ForEach-Object { if([ZW]::IsIconic($_.MainWindowHandle)){ [ZW]::ShowWindow($_.MainWindowHandle,9) } } }' + L +
+        '  else{ $p | ForEach-Object { if([ZW]::IsIconic($_.MainWindowHandle)){ [ZW]::ShowWindow($_.MainWindowHandle,9) }; Start-Sleep -Milliseconds 120; [ZW]::Nudge($_.MainWindowHandle) } }' + L +
         '}' + L, 'utf8');
     }
 
